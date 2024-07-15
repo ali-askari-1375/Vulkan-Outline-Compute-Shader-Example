@@ -139,6 +139,7 @@ vk::SwapchainKHR G_Swapchain = {};
 
 std::vector<ImageTuple> G_OffscreenColorRenderTargets;
 std::vector<ImageTuple> G_OffscreenDepthRenderTargets;
+std::vector<ImageTuple> G_OffscreenCustomStencilRenderTargets;
 std::vector<ImageTuple> G_ColorRenderTargetsMS;
 
 std::vector<vk::Image> G_SwapchainImages = {};
@@ -152,9 +153,9 @@ ImGuiContext *G_ImGuiContext = {};
 ImFont *G_ConsolasFont = {};
 
 ////////////////////////////////////////////////////
-vk::DescriptorPool G_SwapchainDescriptorPool = {};
-vk::DescriptorSetLayout G_OffscreenRTDescriptorSetLayout = {};
-std::vector<vk::DescriptorSet> G_OffscreenRTDescriptorSets = {};
+vk::DescriptorPool G_OffscreenDescriptorPool = {};
+vk::DescriptorSetLayout G_OffscreenDescriptorSetLayout = {};
+std::vector<vk::DescriptorSet> G_OffscreenDescriptorSets = {};
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine, int nCmdShow)
 {
@@ -327,9 +328,9 @@ bool Render(bool bClearOnly)
 		vk::ClearColorValue OffscreenClearColor;
 		std::memcpy(&OffscreenClearColor, DirectX::Colors::Black.f, sizeof(OffscreenClearColor));
 		static constexpr vk::ClearDepthStencilValue OffscreenClearDepth(1.0f, 0);
-		const vk::ClearValue OffscreenClearValues[2] = {OffscreenClearColor, OffscreenClearDepth};
+		const vk::ClearValue OffscreenClearValues[3] = {OffscreenClearColor, OffscreenClearColor, OffscreenClearDepth};
 		const vk::RenderPassBeginInfo OffscreenRenderPassBeginInfo = vk::RenderPassBeginInfo(
-			G_OffscreenRenderPass,G_OffscreenFramebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent), 2, OffscreenClearValues);
+			G_OffscreenRenderPass,G_OffscreenFramebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent), 3, OffscreenClearValues);
 
 		CommandBuffer.beginRenderPass(&OffscreenRenderPassBeginInfo, vk::SubpassContents::eInline, G_DLD);
 
@@ -1015,11 +1016,22 @@ void InitSurface()
 void InitRenderPass()
 {
 	{
-		const std::array<vk::AttachmentDescription, 2> Attachments = std::array<vk::AttachmentDescription, 2>(
+		const std::array<vk::AttachmentDescription, 3> Attachments = std::array<vk::AttachmentDescription, 3>(
 			{
 				vk::AttachmentDescription(
 					{},
 					G_SurfaceFormat.format,
+					G_SampleCount,
+					vk::AttachmentLoadOp::eClear,
+					vk::AttachmentStoreOp::eStore,
+					vk::AttachmentLoadOp::eDontCare,
+					vk::AttachmentStoreOp::eDontCare,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal
+					),
+				vk::AttachmentDescription(
+					{},
+					vk::Format::eR8Uint,
 					G_SampleCount,
 					vk::AttachmentLoadOp::eClear,
 					vk::AttachmentStoreOp::eStore,
@@ -1042,11 +1054,12 @@ void InitRenderPass()
 			 }
 			);
 
-		static constexpr std::array<vk::AttachmentReference, 1> ColorAttachmentRefs = {
+		static constexpr std::array<vk::AttachmentReference, 2> ColorAttachmentRefs = {
 			vk::AttachmentReference(0, vk::ImageLayout::eColorAttachmentOptimal),
+			vk::AttachmentReference(1, vk::ImageLayout::eColorAttachmentOptimal),
 		};
 		static constexpr std::array<vk::AttachmentReference, 1> DepthAttachmentRefs = {
-			vk::AttachmentReference(1, vk::ImageLayout::eDepthStencilAttachmentOptimal),
+			vk::AttachmentReference(2, vk::ImageLayout::eDepthStencilAttachmentOptimal),
 		};
 
 		static constexpr vk::SubpassDescription subpass = vk::SubpassDescription(
@@ -1191,18 +1204,24 @@ void InitRenderPass()
 
 void InitSwapchain()
 {
-	const vk::DescriptorPoolSize PoolSize = vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount);
-	const vk::DescriptorPoolCreateInfo DescriptorPoolCI = vk::DescriptorPoolCreateInfo({}, G_MaxImageCount, PoolSize);
-	G_SwapchainDescriptorPool = G_Device.createDescriptorPool(DescriptorPoolCI, nullptr, G_DLD);
+	const vk::DescriptorPoolSize PoolSizes[2] = {
+		vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount),
+		vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount),
+	};
+	const vk::DescriptorPoolCreateInfo DescriptorPoolCI = vk::DescriptorPoolCreateInfo({}, G_MaxImageCount, PoolSizes);
+	G_OffscreenDescriptorPool = G_Device.createDescriptorPool(DescriptorPoolCI, nullptr, G_DLD);
 
-	static constexpr vk::DescriptorSetLayoutBinding LayoutBinding = vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eFragment);
-	static constexpr vk::DescriptorSetLayoutCreateInfo DescriptorSetLayoutCI = vk::DescriptorSetLayoutCreateInfo({}, 1, &LayoutBinding);
-	G_OffscreenRTDescriptorSetLayout = G_Device.createDescriptorSetLayout(DescriptorSetLayoutCI, nullptr, G_DLD);
+	static constexpr vk::DescriptorSetLayoutBinding LayoutBinding[2] = {
+		vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eFragment),
+		vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eFragment),
+	};
+	static constexpr vk::DescriptorSetLayoutCreateInfo DescriptorSetLayoutCI = vk::DescriptorSetLayoutCreateInfo({}, 2, LayoutBinding);
+	G_OffscreenDescriptorSetLayout = G_Device.createDescriptorSetLayout(DescriptorSetLayoutCI, nullptr, G_DLD);
 
-	G_OffscreenRTDescriptorSets.resize(G_MaxImageCount);
+	G_OffscreenDescriptorSets.resize(G_MaxImageCount);
 	for (std::uint32_t i = 0; i < G_MaxImageCount; i++) {
-		vk::DescriptorSetAllocateInfo DescriptorSetAI = vk::DescriptorSetAllocateInfo(G_SwapchainDescriptorPool, 1, &G_OffscreenRTDescriptorSetLayout);
-		G_OffscreenRTDescriptorSets[i] = G_Device.allocateDescriptorSets(DescriptorSetAI, G_DLD)[0];
+		vk::DescriptorSetAllocateInfo DescriptorSetAI = vk::DescriptorSetAllocateInfo(G_OffscreenDescriptorPool, 1, &G_OffscreenDescriptorSetLayout);
+		G_OffscreenDescriptorSets[i] = G_Device.allocateDescriptorSets(DescriptorSetAI, G_DLD)[0];
 	}
 
 	CreateSwapchain();
@@ -1319,9 +1338,6 @@ void CreateSwapchain()
 			return;
 		}
 
-		const vk::DescriptorImageInfo DescriptorII = vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_OffscreenColorRenderTargets[i]), vk::ImageLayout::eGeneral);
-		const vk::WriteDescriptorSet WriteDS = vk::WriteDescriptorSet(G_OffscreenRTDescriptorSets[i], 0, 0, 1, vk::DescriptorType::eStorageImage, &DescriptorII);
-		G_Device.updateDescriptorSets(WriteDS, nullptr, G_DLD);
 	}
 
 	G_OffscreenDepthRenderTargets.resize(NumImages);
@@ -1330,6 +1346,17 @@ void CreateSwapchain()
 		G_OffscreenDepthRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageTiling::eOptimal, G_DepthFormat, G_SampleCount,
 									  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil, true);
 		if (!std::get<G_ImageTuple_Image>(G_OffscreenDepthRenderTargets[i])) {
+			DestroySwapchain();
+			return;
+		}
+	}
+
+	G_OffscreenCustomStencilRenderTargets.resize(NumImages);
+	std::fill(G_OffscreenCustomStencilRenderTargets.begin(), G_OffscreenCustomStencilRenderTargets.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
+	for (std::size_t i = 0; i < NumImages; i++) {
+		G_OffscreenCustomStencilRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage, vk::ImageTiling::eOptimal, vk::Format::eR8Uint, G_SampleCount,
+									  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true);
+		if (!std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i])) {
 			DestroySwapchain();
 			return;
 		}
@@ -1348,12 +1375,23 @@ void CreateSwapchain()
 		}
 	}
 
+	for (std::size_t i = 0; i < NumImages; i++) {
+		const vk::DescriptorImageInfo DescriptorII[2] = {
+			vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_OffscreenColorRenderTargets[i]), vk::ImageLayout::eGeneral),
+			vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_OffscreenCustomStencilRenderTargets[i]), vk::ImageLayout::eGeneral),
+		};
+		const vk::WriteDescriptorSet WriteDS = vk::WriteDescriptorSet(G_OffscreenDescriptorSets[i], 0, 0, 2, vk::DescriptorType::eStorageImage, DescriptorII);
+		G_Device.updateDescriptorSets(WriteDS, nullptr, G_DLD);
+	}
+
+
 	G_OffscreenFramebuffers.resize(NumImages);
 	std::fill(G_OffscreenFramebuffers.begin(), G_OffscreenFramebuffers.end(), nullptr);
 	for (std::size_t i = 0; i < NumImages; ++i) {
 		const std::vector<vk::ImageView> Attachments = std::vector<vk::ImageView>(
 			{
 			 std::get<G_ImageTuple_ImageView>(G_OffscreenColorRenderTargets[i]),
+			 std::get<G_ImageTuple_ImageView>(G_OffscreenCustomStencilRenderTargets[i]),
 			 std::get<G_ImageTuple_ImageView>(G_OffscreenDepthRenderTargets[i])
 			});
 
@@ -1471,6 +1509,23 @@ void DestroySwapchain()
 		}
 		G_ColorRenderTargetsMS.clear();
 
+		for(auto& [Image, ImageMemory, ImageView] : G_OffscreenCustomStencilRenderTargets) {
+			if (ImageView) {
+				G_Device.destroyImageView(ImageView, nullptr, G_DLD);
+				ImageView = nullptr;
+			}
+			if (ImageMemory) {
+				G_Device.freeMemory(ImageMemory, nullptr, G_DLD);
+				ImageMemory = nullptr;
+			}
+			if (Image) {
+				G_Device.destroyImage(Image, nullptr, G_DLD);
+				Image = nullptr;
+			}
+		}
+		G_OffscreenCustomStencilRenderTargets.clear();
+
+
 		for(auto& [Image, ImageMemory, ImageView] : G_OffscreenDepthRenderTargets) {
 			if (ImageView) {
 				G_Device.destroyImageView(ImageView, nullptr, G_DLD);
@@ -1531,11 +1586,11 @@ void ShutdownSwapchain()
 	DestroySwapchain();
 
 	if (G_Device) {
-		if (G_SwapchainDescriptorPool) {
-			G_Device.destroyDescriptorPool(G_SwapchainDescriptorPool, nullptr, G_DLD);
+		if (G_OffscreenDescriptorPool) {
+			G_Device.destroyDescriptorPool(G_OffscreenDescriptorPool, nullptr, G_DLD);
 		}
-		if (G_OffscreenRTDescriptorSetLayout) {
-			G_Device.destroyDescriptorSetLayout(G_OffscreenRTDescriptorSetLayout, nullptr, G_DLD);
+		if (G_OffscreenDescriptorSetLayout) {
+			G_Device.destroyDescriptorSetLayout(G_OffscreenDescriptorSetLayout, nullptr, G_DLD);
 		}
 	}
 }
