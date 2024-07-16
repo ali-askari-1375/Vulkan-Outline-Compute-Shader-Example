@@ -285,7 +285,7 @@ void InitWindow()
 		LoadCursorA(nullptr, IDC_ARROW),
 		0,
 		0,
-		"VkOutlinePostProcessClass",
+		"VkOutlineComputeShaderClass",
 		LoadIconA(nullptr, IDI_APPLICATION)
 	};
 	::RegisterClassExA(&wcx);
@@ -293,8 +293,8 @@ void InitWindow()
 
 	G_Hwnd = ::CreateWindowExA(
 		0,
-		"VkOutlinePostProcessClass",
-		"Vk Outline Post Process",
+		"VkOutlineComputeShaderClass",
+		"Vk Outline Compute Shader",
 		dwStyle,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,
@@ -310,7 +310,7 @@ void InitWindow()
 void ShutdownWindow()
 {
 	::UnregisterClassA(
-		"VkOutlinePostProcessClass",
+		"VkOutlineComputeShaderClass",
 		G_Hinstance
 		);
 }
@@ -760,9 +760,9 @@ void InitVulkan()
 
 	const std::uint32_t VkApiVersion = vk::enumerateInstanceVersion(G_DLD) & (~std::uint32_t(0xFFFU));
 	const vk::ApplicationInfo AppInfo = vk::ApplicationInfo(
-		"VkOutlinePostProcessExample",
+		"VkOutlineComputeShaderExample",
 		VK_MAKE_API_VERSION(0, 1, 0, 0),
-		"VkOutlinePostProcessEngine",
+		"VkOutlineComputeShaderEngine",
 		VK_MAKE_API_VERSION(0, 1, 0, 0),
 		VkApiVersion
 		);
