@@ -1,0 +1,43 @@
+#version 460
+
+layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+layout (binding = 0, rgba8) uniform readonly image2DMS InputColorImage;
+layout (binding = 1, r8ui) uniform readonly uimage2DMS StencilImage;
+layout (binding = 2, rgba8) uniform image2DMS OutputColorImage;
+
+bool Check()
+{
+	uint Stencil1 = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x - 2, gl_GlobalInvocationID.y - 2), int(gl_GlobalInvocationID.z)).r;
+	if (Stencil1 == 0) return true;
+	uint Stencil2 = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x + 2, gl_GlobalInvocationID.y - 2), int(gl_GlobalInvocationID.z)).r;
+	if (Stencil2 == 0) return true;
+	uint Stencil3 = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x - 2, gl_GlobalInvocationID.y + 2), int(gl_GlobalInvocationID.z)).r;
+	if (Stencil3 == 0) return true;
+	uint Stencil4 = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x + 2, gl_GlobalInvocationID.y + 2), int(gl_GlobalInvocationID.z)).r;
+	if (Stencil4 == 0) return true;
+
+	return false;
+}
+
+void main()
+{
+	ivec2 ImgSize = imageSize(InputColorImage);
+
+	if (gl_GlobalInvocationID.x >= ImgSize.x) return;
+	if (gl_GlobalInvocationID.y >= ImgSize.y) return;
+
+	bool bOutline = false;
+
+	uint Stencil = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y), int(gl_GlobalInvocationID.z)).r;
+	if (Stencil != 0) {
+		bOutline = Check();
+	}
+
+	if (!bOutline) {
+		vec3 rgb = imageLoad(InputColorImage, ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z)).rgb;
+		imageStore(OutputColorImage, ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z), vec4(rgb, 1.0f));
+	} else {
+		imageStore(OutputColorImage, ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z), vec4(0.0f, 0.0f, 0.0f, 1.0f));
+	}
+}
+

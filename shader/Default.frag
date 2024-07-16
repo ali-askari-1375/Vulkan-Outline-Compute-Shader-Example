@@ -6,6 +6,6 @@ layout(location = 1) out uint FragCustomStencil;
 
 void main()
 {
-	FragColor = vec4(1.0f, 0.0f, 0.0f, 1.0f) ;
-	FragCustomStencil = 45;
+	FragColor = vec4(0.0f, 1.0f, 0.4999f, 1.0f) ;
+	FragCustomStencil = 1;
 }

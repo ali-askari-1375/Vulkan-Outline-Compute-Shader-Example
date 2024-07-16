@@ -351,7 +351,7 @@ bool Render(bool bClearOnly)
 		CommandBuffer.begin(commandBufferBeginInfo, G_DLD);
 
 		vk::ClearColorValue ClearColor;
-		std::memcpy(&ClearColor, DirectX::Colors::Black.f, sizeof(ClearColor));
+		std::memcpy(&ClearColor, DirectX::Colors::White.f, sizeof(ClearColor));
 		static constexpr vk::ClearColorValue ClearCustomColor(std::array<std::uint32_t, 4>{0,0,0,0});
 		static constexpr vk::ClearDepthStencilValue ClearDepth(1.0f, 0);
 		const vk::ClearValue ClearValues[3] = {ClearColor, ClearCustomColor, ClearDepth};
@@ -417,7 +417,11 @@ bool Render(bool bClearOnly)
 		CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, G_ComputePipeline, G_DLD);
 		CommandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, G_ComputePipelineLayout, 0, G_OffscreenDescriptorSets[ImageIndex], nullptr, G_DLD);
 
-		CommandBuffer.dispatch((G_SwapchainExtent.width / 16) + 1, (G_SwapchainExtent.height / 16) + 1, 1, G_DLD);
+		if (G_SampleCount == vk::SampleCountFlagBits::e1) {
+			CommandBuffer.dispatch((G_SwapchainExtent.width / 16) + 1, (G_SwapchainExtent.height / 16) + 1, 1, G_DLD);
+		} else {
+			CommandBuffer.dispatch((G_SwapchainExtent.width / 16) + 1, (G_SwapchainExtent.height / 16) + 1, static_cast<std::uint32_t>(G_SampleCount), G_DLD);
+		}
 
 		CommandBuffer.pipelineBarrier(
 			vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
@@ -952,7 +956,7 @@ void InitPhysicalDevice()
 	if (!SuitablePhysicalDevices.empty()) {
 		for (auto Item : SuitablePhysicalDevices) {
 			auto Props = Item.getProperties(G_DLD);
-			if (Props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+			if (Props.deviceType == vk::PhysicalDeviceType::eIntegratedGpu) {
 				G_PhysicalDevice = Item;
 				break;
 			}
@@ -969,9 +973,9 @@ void InitPhysicalDevice()
 
 	const vk::SampleCountFlags SampleCountFlags = PhysDeviceProps.limits.framebufferColorSampleCounts & PhysDeviceProps.limits.framebufferDepthSampleCounts;
 //	if (SampleCountFlags & vk::SampleCountFlagBits::e8) { G_SampleCount = vk::SampleCountFlagBits::e8; }
-//	else if (SampleCountFlags & vk::SampleCountFlagBits::e4) { G_SampleCount = vk::SampleCountFlagBits::e4; }
-//	else if (SampleCountFlags & vk::SampleCountFlagBits::e2) { G_SampleCount = vk::SampleCountFlagBits::e2; }
-//	else { G_SampleCount = vk::SampleCountFlagBits::e1; }
+	if (SampleCountFlags & vk::SampleCountFlagBits::e4) { G_SampleCount = vk::SampleCountFlagBits::e4; }
+	else if (SampleCountFlags & vk::SampleCountFlagBits::e2) { G_SampleCount = vk::SampleCountFlagBits::e2; }
+	else { G_SampleCount = vk::SampleCountFlagBits::e1; }
 
 }
 
@@ -1789,7 +1793,7 @@ void InitComputePipeline()
 	static constexpr vk::PipelineLayoutCreateInfo PipelineLayoutCI = vk::PipelineLayoutCreateInfo{{}, 1, &G_OffscreenDescriptorSetLayout, 0, nullptr};
 	G_ComputePipelineLayout = G_Device.createPipelineLayout(PipelineLayoutCI, nullptr, G_DLD);
 
-	const vk::ShaderModule ShaderModuleCS = CreateShader("OutlineCS.spv");
+	const vk::ShaderModule ShaderModuleCS = CreateShader(G_SampleCount == vk::SampleCountFlagBits::e1 ? "OutlineCS.spv" : "OutlineMSCS.spv");
 	const vk::PipelineShaderStageCreateInfo ShaderStageCI = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eCompute, ShaderModuleCS, "main");
 
 	const vk::ComputePipelineCreateInfo ComputePipelineCI = vk::ComputePipelineCreateInfo(
