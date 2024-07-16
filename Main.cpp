@@ -35,6 +35,7 @@
 
 using BufferTuple = std::tuple<vk::Buffer, vk::DeviceMemory>;
 using ImageTuple = std::tuple<vk::Image, vk::DeviceMemory, vk::ImageView>;
+using CommandBufferTuple = std::tuple<vk::CommandBuffer, vk::CommandBuffer, vk::CommandBuffer>;
 
 constexpr std::uint32_t G_PreferredImageCount = 2;
 constexpr std::uint32_t G_MaxFramesInFlight = 2;
@@ -45,6 +46,10 @@ constexpr std::uint32_t G_BufferTuple_DeviceMemory = 1;
 constexpr std::uint32_t G_ImageTuple_Image = 0;
 constexpr std::uint32_t G_ImageTuple_DeviceMemory = 1;
 constexpr std::uint32_t G_ImageTuple_ImageView = 2;
+
+constexpr std::uint32_t G_CommandBufferTuple_Graphics1 = 0;
+constexpr std::uint32_t G_CommandBufferTuple_Graphics2 = 1;
+constexpr std::uint32_t G_CommandBufferTuple_Compute = 2;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -58,9 +63,12 @@ std::uint32_t FindMemoryTypeIndex(std::uint32_t typeFilter, vk::MemoryPropertyFl
 vk::ShaderModule CreateShader(const std::string &fileName);
 BufferTuple CreateBuffer(vk::BufferUsageFlags UsageFlags, vk::DeviceSize ByteSize, void* DataPtr, bool bDeviceLocal = false);
 ImageTuple CreateImage(vk::ImageUsageFlags UsageFlags, vk::ImageTiling Tiling, vk::Format Fmt, vk::SampleCountFlagBits SampleCount,
-					   std::uint32_t Width, std::uint32_t Height, vk::ImageAspectFlags AspectMask, bool bDeviceLocal = true);
-vk::CommandBuffer BeginSingleUseCommandBuffer();
-void EndSingleUseCommandBuffer(vk::CommandBuffer);
+					   std::uint32_t Width, std::uint32_t Height, vk::ImageAspectFlags AspectMask, bool bDeviceLocal = true,
+					   vk::ArrayProxy<std::uint32_t> QueueFamilyIndices = {});
+vk::CommandBuffer BeginSingleUseGraphicsCommandBuffer();
+void EndSingleUseGraphicsCommandBuffer(vk::CommandBuffer);
+vk::CommandBuffer BeginSingleUseComputeCommandBuffer();
+void EndSingleUseComputeCommandBuffer(vk::CommandBuffer);
 
 void InitVulkan();
 void ShutdownVulkan();
@@ -87,6 +95,15 @@ void ShutdownSwapchain();
 void InitImGui();
 void ShutdownImGui();
 
+void InitGraphicsPipeline();
+void ShutdownGraphicsPipeline();
+
+void InitComputePipeline();
+void ShutdownComputePipeline();
+
+void InitModel();
+void ShutdownModel();
+
 LRESULT CALLBACK WndProc(HWND Hwnd, UINT Msg, WPARAM Wparam, LPARAM Lparam);
 
 ///////////////////////////////////////////////////////////////////////////
@@ -111,14 +128,18 @@ vk::Queue G_GraphicsQueue;
 vk::Queue G_PresentQueue;
 vk::Queue G_ComputeQueue;
 
-vk::CommandPool G_DynamicCommandPool = {};
-vk::CommandPool G_StaticCommandPool = {};
+vk::CommandPool G_GraphicsCommandPoolDynamic = {};
+vk::CommandPool G_GraphicsCommandPoolStatic = {};
+vk::CommandPool G_ComputeCommandPoolDynamic = {};
+vk::CommandPool G_ComputeCommandPoolStatic = {};
 
-std::array<vk::CommandBuffer, G_MaxFramesInFlight> G_CommandBuffers = {};
+std::array<CommandBufferTuple, G_MaxFramesInFlight> G_CommandBuffers = {};
 
 std::array<bool, G_MaxFramesInFlight> G_WaitForFences = {};
 std::array<vk::Fence, G_MaxFramesInFlight> G_InFlightFences = {};
 std::array<vk::Semaphore, G_MaxFramesInFlight> G_ImageAvailableSemaphores = {};
+std::array<vk::Semaphore, G_MaxFramesInFlight> G_OffscreenFinishedSemaphores = {};
+std::array<vk::Semaphore, G_MaxFramesInFlight> G_ComputeFinishedSemaphores = {};
 std::array<vk::Semaphore, G_MaxFramesInFlight> G_RenderFinishedSemaphores = {};
 
 vk::SurfaceKHR G_Surface = {};
@@ -128,7 +149,6 @@ std::uint32_t G_SurfaceImageCount = {};
 std::uint32_t G_MaxImageCount = {};
 vk::Format G_DepthFormat = {};
 
-vk::RenderPass G_OffscreenRenderPass = {};
 vk::RenderPass G_RenderPass = {};
 
 bool G_SwapchainOK = false;
@@ -140,22 +160,28 @@ vk::SwapchainKHR G_Swapchain = {};
 std::vector<ImageTuple> G_OffscreenColorRenderTargets;
 std::vector<ImageTuple> G_OffscreenDepthRenderTargets;
 std::vector<ImageTuple> G_OffscreenCustomStencilRenderTargets;
-std::vector<ImageTuple> G_ColorRenderTargetsMS;
+std::vector<ImageTuple> G_ColorRenderTargets;
 
 std::vector<vk::Image> G_SwapchainImages = {};
 std::vector<vk::ImageView> G_SwapchainImageViews = {};
 
-std::vector<vk::Framebuffer> G_OffscreenFramebuffers = {};
 std::vector<vk::Framebuffer> G_Framebuffers = {};
 
 vk::DescriptorPool G_ImguiDescriptorPool = {};
 ImGuiContext *G_ImGuiContext = {};
 ImFont *G_ConsolasFont = {};
 
-////////////////////////////////////////////////////
 vk::DescriptorPool G_OffscreenDescriptorPool = {};
 vk::DescriptorSetLayout G_OffscreenDescriptorSetLayout = {};
 std::vector<vk::DescriptorSet> G_OffscreenDescriptorSets = {};
+
+vk::PipelineLayout G_GraphicsPipelineLayout = {};
+vk::Pipeline G_GraphicsPipeline = {};
+
+vk::PipelineLayout G_ComputePipelineLayout = {};
+vk::Pipeline G_ComputePipeline = {};
+
+////////////////////////////////////////////////////
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine, int nCmdShow)
 {
@@ -166,9 +192,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
 	InitWindow();
 	InitVulkan();
 
-	ImGui::SetCurrentContext(G_ImGuiContext);
+//	ImGui::SetCurrentContext(G_ImGuiContext);
 	Render(true);
-	ImGui::SetCurrentContext(nullptr);
+//	ImGui::SetCurrentContext(nullptr);
 
 	MSG Msg = {};
 	bool bContinue = true;
@@ -184,24 +210,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
 					break;
 				}
 
-				if (Msg.hwnd == G_Hwnd) ImGui::SetCurrentContext(G_ImGuiContext);
+//				if (Msg.hwnd == G_Hwnd) ImGui::SetCurrentContext(G_ImGuiContext);
 				::TranslateMessage(&Msg);
 				::DispatchMessage(&Msg);
-				ImGui::SetCurrentContext(nullptr);
+//				ImGui::SetCurrentContext(nullptr);
 
 			} else {
 				break;
 			}
 		}
 
-		ImGui::SetCurrentContext(G_ImGuiContext);
+//		ImGui::SetCurrentContext(G_ImGuiContext);
 		if (!::IsIconic(G_Hwnd)) {
 			if (!Render()) {
 				RecreateSwapchain();
 				Render();
 			}
 		}
-		ImGui::SetCurrentContext(nullptr);
+//		ImGui::SetCurrentContext(nullptr);
 	}
 
 	ShutdownVulkan();
@@ -237,7 +263,7 @@ LRESULT CALLBACK WndProc(HWND Hwnd, UINT Msg, WPARAM Wparam, LPARAM Lparam)
 	};
 
 	const auto Result = InternalWndProc(Hwnd, Msg, Wparam, Lparam);
-	ImGui_ImplWin32_WndProcHandler(Hwnd, Msg, Wparam, Lparam);
+//	ImGui_ImplWin32_WndProcHandler(Hwnd, Msg, Wparam, Lparam);
 
 	return Result;
 }
@@ -317,80 +343,186 @@ bool Render(bool bClearOnly)
 		return false;
 	}
 
-	vk::CommandBuffer CommandBuffer = G_CommandBuffers[G_CurrentFrame];
-	CommandBuffer.reset({}, G_DLD);
+	{
+		vk::CommandBuffer CommandBuffer = std::get<G_CommandBufferTuple_Graphics1>(G_CommandBuffers[G_CurrentFrame]);
+		CommandBuffer.reset({}, G_DLD);
 
-	const vk::CommandBufferBeginInfo commandBufferBeginInfo = {};
-	CommandBuffer.begin(commandBufferBeginInfo, G_DLD);
-
-	if (!bClearOnly) {
-
-		vk::ClearColorValue OffscreenClearColor;
-		std::memcpy(&OffscreenClearColor, DirectX::Colors::Black.f, sizeof(OffscreenClearColor));
-		static constexpr vk::ClearDepthStencilValue OffscreenClearDepth(1.0f, 0);
-		const vk::ClearValue OffscreenClearValues[3] = {OffscreenClearColor, OffscreenClearColor, OffscreenClearDepth};
-		const vk::RenderPassBeginInfo OffscreenRenderPassBeginInfo = vk::RenderPassBeginInfo(
-			G_OffscreenRenderPass,G_OffscreenFramebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent), 3, OffscreenClearValues);
-
-		CommandBuffer.beginRenderPass(&OffscreenRenderPassBeginInfo, vk::SubpassContents::eInline, G_DLD);
-
-		CommandBuffer.setViewport(0, vk::Viewport{0.0f, 0.0f, float(G_SwapchainExtent.width), float(G_SwapchainExtent.height), 0.0f, 1.0f}, G_DLD);
-		CommandBuffer.setScissor(0, vk::Rect2D{vk::Offset2D{0, 0}, vk::Extent2D{G_SwapchainExtent.width, G_SwapchainExtent.height}}, G_DLD);
-
-		ImGuiRender(CommandBuffer);
-		CommandBuffer.endRenderPass(G_DLD);
+		const vk::CommandBufferBeginInfo commandBufferBeginInfo = {};
+		CommandBuffer.begin(commandBufferBeginInfo, G_DLD);
 
 		vk::ClearColorValue ClearColor;
 		std::memcpy(&ClearColor, DirectX::Colors::Black.f, sizeof(ClearColor));
-		static constexpr vk::ClearColorValue ClearResolve(0.0f, 0.0f, 0.0f, 1.0f);
-		const vk::ClearValue ClearValues[1] = {ClearColor};
-		const vk::ClearValue MultiSamplesClearValues[2] = {ClearColor, ClearResolve};
-		const vk::RenderPassBeginInfo RenderPassBeginInfo = vk::RenderPassBeginInfo(G_RenderPass, G_Framebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent), (G_SampleCount == vk::SampleCountFlagBits::e1) ? 1 : 2, (G_SampleCount == vk::SampleCountFlagBits::e1) ? ClearValues : MultiSamplesClearValues);
-
-		CommandBuffer.beginRenderPass(&RenderPassBeginInfo, vk::SubpassContents::eInline, G_DLD);
-		CommandBuffer.endRenderPass(G_DLD);
-
-	} else {
-
-		vk::ClearColorValue ClearColor;
-		std::memcpy(&ClearColor, DirectX::Colors::Black.f, sizeof(ClearColor));
-		static constexpr vk::ClearColorValue ClearResolve(0.0f, 0.0f, 0.0f, 1.0f);
-
-		const vk::ClearValue ClearValues[1] = {ClearColor};
-		const vk::ClearValue ClearValuesMS[2] = {ClearColor, ClearResolve};
+		static constexpr vk::ClearColorValue ClearCustomColor(std::array<std::uint32_t, 4>{0,0,0,0});
+		static constexpr vk::ClearDepthStencilValue ClearDepth(1.0f, 0);
+		const vk::ClearValue ClearValues[3] = {ClearColor, ClearCustomColor, ClearDepth};
 		const vk::RenderPassBeginInfo RenderPassBeginInfo = vk::RenderPassBeginInfo(
-			G_RenderPass, G_Framebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent),
-			(G_SampleCount == vk::SampleCountFlagBits::e1) ? 1 : 2, (G_SampleCount == vk::SampleCountFlagBits::e1) ? ClearValues : ClearValuesMS);
+			G_RenderPass, G_Framebuffers[ImageIndex], vk::Rect2D(vk::Offset2D(0,0), G_SwapchainExtent), 3, ClearValues);
 
 		CommandBuffer.beginRenderPass(&RenderPassBeginInfo, vk::SubpassContents::eInline, G_DLD);
+		if (!bClearOnly) {
+
+			CommandBuffer.setViewport(0, vk::Viewport{0.0f, 0.0f, float(G_SwapchainExtent.width), float(G_SwapchainExtent.height), 0.0f, 1.0f}, G_DLD);
+			CommandBuffer.setScissor(0, vk::Rect2D{vk::Offset2D{0, 0}, vk::Extent2D{G_SwapchainExtent.width, G_SwapchainExtent.height}}, G_DLD);
+
+			CommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, G_GraphicsPipeline, G_DLD);
+			CommandBuffer.draw(6, 1, 0, 0, G_DLD);
+
+			//ImGuiRender(CommandBuffer);
+
+		}
 		CommandBuffer.endRenderPass(G_DLD);
 
+		CommandBuffer.end(G_DLD);
+
+		const vk::Semaphore WaitSemaphores[] = { G_ImageAvailableSemaphores[G_CurrentFrame]};
+		const vk::Semaphore SignalSemaphores[] = { G_OffscreenFinishedSemaphores[G_CurrentFrame]};
+		static constexpr vk::PipelineStageFlags WaitStages[] = { vk::PipelineStageFlagBits::eAllCommands };
+		const vk::SubmitInfo submitInfo = vk::SubmitInfo(1, WaitSemaphores, WaitStages, 1, &CommandBuffer, 1, SignalSemaphores);
+		try {
+			G_WaitForFences[G_CurrentFrame] = true;
+			G_GraphicsQueue.submit(submitInfo, nullptr, G_DLD);
+		}
+		catch (...) {
+			G_WaitForFences[G_CurrentFrame] = false;
+			G_SwapchainOK = false;
+			return false;
+		}
 	}
 
-	CommandBuffer.end(G_DLD);
+	{
+		vk::CommandBuffer CommandBuffer = std::get<G_CommandBufferTuple_Compute>(G_CommandBuffers[G_CurrentFrame]);
+		CommandBuffer.reset({}, G_DLD);
 
-	const vk::Semaphore waitSemaphores[] = { G_ImageAvailableSemaphores[G_CurrentFrame]};
-	const vk::Semaphore signalSemaphores[] = { G_RenderFinishedSemaphores[G_CurrentFrame]};
-	static constexpr vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
-	const vk::SubmitInfo submitInfo = vk::SubmitInfo(1, waitSemaphores, waitStages, 1, &CommandBuffer, 1, signalSemaphores);
-	try {
-		G_WaitForFences[G_CurrentFrame] = true;
-		G_GraphicsQueue.submit(submitInfo, G_InFlightFences[G_CurrentFrame], G_DLD);
-	}
-	catch (...) {
-		G_WaitForFences[G_CurrentFrame] = false;
-		G_SwapchainOK = false;
-		return false;
+		const vk::CommandBufferBeginInfo commandBufferBeginInfo = {};
+		CommandBuffer.begin(commandBufferBeginInfo, G_DLD);
+
+
+		const vk::ImageMemoryBarrier AcquireImageMemoryBarriers[] = {
+		vk::ImageMemoryBarrier(
+			vk::AccessFlagBits::eNone, vk::AccessFlagBits::eShaderWrite,
+			vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
+			vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
+			std::get<G_ImageTuple_Image>(G_ColorRenderTargets[ImageIndex]),
+			vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+
+		};
+		CommandBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+			{}, {}, {},
+			AcquireImageMemoryBarriers,
+			G_DLD
+			);
+
+
+		CommandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, G_ComputePipeline, G_DLD);
+		CommandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, G_ComputePipelineLayout, 0, G_OffscreenDescriptorSets[ImageIndex], nullptr, G_DLD);
+
+		CommandBuffer.dispatch((G_SwapchainExtent.width / 16) + 1, (G_SwapchainExtent.height / 16) + 1, 1, G_DLD);
+
+		CommandBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+			{}, {}, {},
+			{},
+			G_DLD
+			);
+
+		CommandBuffer.end(G_DLD);
+
+		const vk::Semaphore WaitSemaphores[] = { G_OffscreenFinishedSemaphores[G_CurrentFrame]};
+		const vk::Semaphore SignalSemaphores[] = { G_ComputeFinishedSemaphores[G_CurrentFrame]};
+		static constexpr vk::PipelineStageFlags WaitStages[] = { vk::PipelineStageFlagBits::eAllCommands };
+		const vk::SubmitInfo submitInfo = vk::SubmitInfo(1, WaitSemaphores, WaitStages, 1, &CommandBuffer, 1, SignalSemaphores);
+		try {
+			G_WaitForFences[G_CurrentFrame] = true;
+			G_ComputeQueue.submit(submitInfo, nullptr, G_DLD);
+		}
+		catch (...) {
+			G_WaitForFences[G_CurrentFrame] = false;
+			G_SwapchainOK = false;
+			return false;
+		}
 	}
 
-	const vk::SwapchainKHR Swapchains[1] = {G_Swapchain};
-	const vk::PresentInfoKHR presentInfo = vk::PresentInfoKHR(1, signalSemaphores, 1, Swapchains, &ImageIndex);
-	try {
-		(void)G_PresentQueue.presentKHR(presentInfo, G_DLD);
+	{
+		vk::CommandBuffer CommandBuffer = std::get<G_CommandBufferTuple_Graphics2>(G_CommandBuffers[G_CurrentFrame]);
+		CommandBuffer.reset({}, G_DLD);
+
+		const vk::CommandBufferBeginInfo commandBufferBeginInfo = {};
+		CommandBuffer.begin(commandBufferBeginInfo, G_DLD);
+
+		const vk::ImageMemoryBarrier AcquireImageMemoryBarriers[] = {
+			vk::ImageMemoryBarrier(
+				vk::AccessFlagBits::eNone, vk::AccessFlagBits::eTransferRead,
+				vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal,
+				vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
+				std::get<G_ImageTuple_Image>(G_ColorRenderTargets[ImageIndex]),
+				vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+			vk::ImageMemoryBarrier(
+				vk::AccessFlagBits::eNone, vk::AccessFlagBits::eTransferWrite,
+				vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+				vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
+				G_SwapchainImages[ImageIndex],
+				vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+		};
+		CommandBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+			{}, {}, {},
+			AcquireImageMemoryBarriers,
+			G_DLD
+			);
+
+
+		if (G_SampleCount != vk::SampleCountFlagBits::e1) {
+			const vk::ImageResolve ImageResolve = vk::ImageResolve(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1), {}, vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1), {}, vk::Extent3D(G_SwapchainExtent.width, G_SwapchainExtent.height, 1));
+			CommandBuffer.resolveImage(std::get<G_ImageTuple_Image>(G_ColorRenderTargets[ImageIndex]), vk::ImageLayout::eTransferSrcOptimal, G_SwapchainImages[ImageIndex], vk::ImageLayout::eTransferDstOptimal, ImageResolve, G_DLD);
+		} else {
+			const vk::ImageCopy ImageCopy = vk::ImageCopy(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1), {}, vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1), {}, vk::Extent3D(G_SwapchainExtent.width, G_SwapchainExtent.height, 1));
+			CommandBuffer.copyImage(std::get<G_ImageTuple_Image>(G_ColorRenderTargets[ImageIndex]), vk::ImageLayout::eTransferSrcOptimal, G_SwapchainImages[ImageIndex], vk::ImageLayout::eTransferDstOptimal, ImageCopy, G_DLD);
+		}
+
+		const vk::ImageMemoryBarrier ReleaseImageMemoryBarriers[] = {
+			vk::ImageMemoryBarrier(
+				vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eNone,
+				vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR,
+				vk::QueueFamilyIgnored, vk::QueueFamilyIgnored,
+				G_SwapchainImages[ImageIndex],
+				vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+		};
+		CommandBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+			{}, {}, {},
+			ReleaseImageMemoryBarriers,
+			G_DLD
+			);
+
+		CommandBuffer.end(G_DLD);
+
+		const vk::Semaphore WaitSemaphores[] = { G_ComputeFinishedSemaphores[G_CurrentFrame]};
+		const vk::Semaphore SignalSemaphores[] = { G_RenderFinishedSemaphores[G_CurrentFrame]};
+		static constexpr vk::PipelineStageFlags WaitStages[] = { vk::PipelineStageFlagBits::eAllCommands };
+		const vk::SubmitInfo submitInfo = vk::SubmitInfo(1, WaitSemaphores, WaitStages, 1, &CommandBuffer, 1, SignalSemaphores);
+		try {
+			G_WaitForFences[G_CurrentFrame] = true;
+			G_GraphicsQueue.submit(submitInfo, G_InFlightFences[G_CurrentFrame], G_DLD);
+		}
+		catch (...) {
+			G_WaitForFences[G_CurrentFrame] = false;
+			G_SwapchainOK = false;
+			return false;
+		}
 	}
-	catch (...) {
-		G_SwapchainOK = false;
-		return false;
+
+	{
+		const vk::Semaphore WaitSemaphores[] = { G_RenderFinishedSemaphores[G_CurrentFrame]};
+		const vk::SwapchainKHR Swapchains[1] = {G_Swapchain};
+		const vk::PresentInfoKHR PresentInfo = vk::PresentInfoKHR(1, WaitSemaphores, 1, Swapchains, &ImageIndex);
+		try {
+			(void)G_PresentQueue.presentKHR(PresentInfo, G_DLD);
+		}
+		catch (...) {
+			G_SwapchainOK = false;
+			return false;
+		}
 	}
 
 	G_CurrentFrame = (G_CurrentFrame + 1) % G_MaxFramesInFlight;
@@ -441,7 +573,7 @@ std::uint32_t FindMemoryTypeIndex(std::uint32_t typeFilter, vk::MemoryPropertyFl
 
 vk::ShaderModule CreateShader(const std::string &fileName)
 {
-	const std::string FilePath = std::string(APP_SOURCE_PATH) + std::string("/shaders/") + fileName;
+	const std::string FilePath = std::string(APP_SOURCE_PATH) + std::string("/shader/") + fileName;
 	std::ifstream Ifs = std::ifstream(FilePath, std::ios::binary | std::ios::in);
 
 	if (!Ifs.is_open()) {
@@ -506,10 +638,10 @@ BufferTuple CreateBuffer(vk::BufferUsageFlags UsageFlags, vk::DeviceSize ByteSiz
 		const vk::DeviceMemory LocalBufferMemory = G_Device.allocateMemory(LocalMemAI, nullptr, G_DLD);
 		G_Device.bindBufferMemory(LocalBuffer, LocalBufferMemory, 0, G_DLD);
 
-		const vk::CommandBuffer CommandBuffer = BeginSingleUseCommandBuffer();
+		const vk::CommandBuffer CommandBuffer = BeginSingleUseGraphicsCommandBuffer();
 		const vk::BufferCopy BufferCopy = vk::BufferCopy(0, 0, ByteSize);
 		CommandBuffer.copyBuffer(Buffer, LocalBuffer, BufferCopy, G_DLD);
-		EndSingleUseCommandBuffer(CommandBuffer);
+		EndSingleUseGraphicsCommandBuffer(CommandBuffer);
 
 		G_Device.freeMemory(BufferMemory, nullptr, G_DLD);
 		G_Device.destroyBuffer(Buffer, nullptr, G_DLD);
@@ -527,7 +659,8 @@ ImageTuple CreateImage(vk::ImageUsageFlags UsageFlags,
 					   std::uint32_t Width,
 					   std::uint32_t Height,
 					   vk::ImageAspectFlags AspectMask,
-					   bool bDeviceLocal)
+					   bool bDeviceLocal,
+					   vk::ArrayProxy<std::uint32_t> QueueFamilyIndices)
 {
 	const vk::ImageCreateInfo ImageCI = vk::ImageCreateInfo(
 		{},
@@ -539,8 +672,8 @@ ImageTuple CreateImage(vk::ImageUsageFlags UsageFlags,
 		SampleCount,
 		Tiling,
 		UsageFlags,
-		vk::SharingMode::eExclusive,
-		{},
+		QueueFamilyIndices.empty() ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent,
+		QueueFamilyIndices,
 		vk::ImageLayout::eUndefined
 		);
 
@@ -581,9 +714,9 @@ ImageTuple CreateImage(vk::ImageUsageFlags UsageFlags,
 	return std::make_tuple(Image, ImageMemory, ImageView);
 }
 
-vk::CommandBuffer BeginSingleUseCommandBuffer()
+vk::CommandBuffer BeginSingleUseGraphicsCommandBuffer()
 {
-	const vk::CommandBufferAllocateInfo CommandBufferAI = vk::CommandBufferAllocateInfo(G_StaticCommandPool, vk::CommandBufferLevel::ePrimary, 1);
+	const vk::CommandBufferAllocateInfo CommandBufferAI = vk::CommandBufferAllocateInfo(G_GraphicsCommandPoolStatic, vk::CommandBufferLevel::ePrimary, 1);
 	vk::CommandBuffer CommandBuffer = G_Device.allocateCommandBuffers(CommandBufferAI, G_DLD)[0];
 	const vk::CommandBufferBeginInfo CommandBufferBI = vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 	CommandBuffer.begin(CommandBufferBI, G_DLD);
@@ -591,12 +724,30 @@ vk::CommandBuffer BeginSingleUseCommandBuffer()
 	return CommandBuffer;
 }
 
-void EndSingleUseCommandBuffer(vk::CommandBuffer CommandBuffer)
+void EndSingleUseGraphicsCommandBuffer(vk::CommandBuffer CommandBuffer)
 {
 	CommandBuffer.end(G_DLD);
 	const vk::SubmitInfo SI = vk::SubmitInfo(0, nullptr, 0, 1, &CommandBuffer, 0, nullptr);
 	G_GraphicsQueue.submit(SI, nullptr, G_DLD);
 	G_GraphicsQueue.waitIdle(G_DLD);
+}
+
+vk::CommandBuffer BeginSingleUseComputeCommandBuffer()
+{
+	const vk::CommandBufferAllocateInfo CommandBufferAI = vk::CommandBufferAllocateInfo(G_ComputeCommandPoolStatic, vk::CommandBufferLevel::ePrimary, 1);
+	vk::CommandBuffer CommandBuffer = G_Device.allocateCommandBuffers(CommandBufferAI, G_DLD)[0];
+	const vk::CommandBufferBeginInfo CommandBufferBI = vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+	CommandBuffer.begin(CommandBufferBI, G_DLD);
+
+	return CommandBuffer;
+}
+
+void EndSingleUseComputeCommandBuffer(vk::CommandBuffer CommandBuffer)
+{
+	CommandBuffer.end(G_DLD);
+	const vk::SubmitInfo SI = vk::SubmitInfo(0, nullptr, 0, 1, &CommandBuffer, 0, nullptr);
+	G_ComputeQueue.submit(SI, nullptr, G_DLD);
+	G_ComputeQueue.waitIdle(G_DLD);
 }
 
 void InitVulkan()
@@ -652,7 +803,11 @@ void InitVulkan()
 	InitRenderPass();
 
 	InitSwapchain();
-	InitImGui();
+//	InitImGui();
+
+	InitGraphicsPipeline();
+	InitComputePipeline();
+	InitModel();
 }
 
 void ShutdownVulkan()
@@ -660,19 +815,17 @@ void ShutdownVulkan()
 	if (G_Device) {
 		G_Device.waitIdle(G_DLD);
 
-		ShutdownImGui();
+		ShutdownModel();
+		ShutdownComputePipeline();
+		ShutdownGraphicsPipeline();
+
+//		ShutdownImGui();
 		ShutdownSwapchain();
 
 		if (G_RenderPass) {
 			G_Device.destroyRenderPass(G_RenderPass, nullptr, G_DLD);
 			G_RenderPass = nullptr;
 		}
-
-		if (G_OffscreenRenderPass) {
-			G_Device.destroyRenderPass(G_OffscreenRenderPass, nullptr, G_DLD);
-			G_OffscreenRenderPass = nullptr;
-		}
-
 
 		if (G_Surface) {
 			G_VkInstance.destroySurfaceKHR(G_Surface, nullptr, G_DLD);
@@ -693,6 +846,20 @@ void ShutdownVulkan()
 			}
 		}
 
+		for (auto& Item : G_ComputeFinishedSemaphores) {
+			if (Item) {
+				G_Device.destroySemaphore(Item, nullptr, G_DLD);
+				Item = nullptr;
+			}
+		}
+
+		for (auto& Item : G_OffscreenFinishedSemaphores) {
+			if (Item) {
+				G_Device.destroySemaphore(Item, nullptr, G_DLD);
+				Item = nullptr;
+			}
+		}
+
 		for (auto& Item : G_ImageAvailableSemaphores) {
 			if (Item) {
 				G_Device.destroySemaphore(Item, nullptr, G_DLD);
@@ -700,21 +867,40 @@ void ShutdownVulkan()
 			}
 		}
 
-		for (auto& Item : G_CommandBuffers) {
-			if (Item) {
-				G_Device.freeCommandBuffers(G_DynamicCommandPool, Item, G_DLD);
-				Item = nullptr;
+		for (auto& [One, Two, Three] : G_CommandBuffers) {
+			if (One) {
+				G_Device.freeCommandBuffers(G_GraphicsCommandPoolDynamic, One, G_DLD);
+				One = nullptr;
+			}
+			if (Two) {
+				G_Device.freeCommandBuffers(G_GraphicsCommandPoolDynamic, Two, G_DLD);
+				Two = nullptr;
+			}
+			if (Three) {
+				G_Device.freeCommandBuffers(G_ComputeCommandPoolDynamic, Three, G_DLD);
+				Three = nullptr;
 			}
 		}
 
-		if (G_DynamicCommandPool) {
-			G_Device.destroyCommandPool(G_DynamicCommandPool, nullptr, G_DLD);
-			G_DynamicCommandPool = nullptr;
+		if (G_ComputeCommandPoolDynamic) {
+			G_Device.destroyCommandPool(G_ComputeCommandPoolDynamic, nullptr, G_DLD);
+			G_ComputeCommandPoolDynamic = nullptr;
 		}
 
-		if (G_StaticCommandPool) {
-			G_Device.destroyCommandPool(G_StaticCommandPool, nullptr, G_DLD);
-			G_StaticCommandPool = nullptr;
+		if (G_ComputeCommandPoolStatic) {
+			G_Device.destroyCommandPool(G_ComputeCommandPoolStatic, nullptr, G_DLD);
+			G_ComputeCommandPoolStatic = nullptr;
+		}
+
+
+		if (G_GraphicsCommandPoolDynamic) {
+			G_Device.destroyCommandPool(G_GraphicsCommandPoolDynamic, nullptr, G_DLD);
+			G_GraphicsCommandPoolDynamic = nullptr;
+		}
+
+		if (G_GraphicsCommandPoolStatic) {
+			G_Device.destroyCommandPool(G_GraphicsCommandPoolStatic, nullptr, G_DLD);
+			G_GraphicsCommandPoolStatic = nullptr;
 		}
 
 		G_Device.destroy(nullptr, G_DLD);
@@ -766,7 +952,7 @@ void InitPhysicalDevice()
 	if (!SuitablePhysicalDevices.empty()) {
 		for (auto Item : SuitablePhysicalDevices) {
 			auto Props = Item.getProperties(G_DLD);
-			if (Props.deviceType == vk::PhysicalDeviceType::eIntegratedGpu) {
+			if (Props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
 				G_PhysicalDevice = Item;
 				break;
 			}
@@ -782,10 +968,10 @@ void InitPhysicalDevice()
 	const vk::PhysicalDeviceProperties PhysDeviceProps = G_PhysicalDevice.getProperties(G_DLD);
 
 	const vk::SampleCountFlags SampleCountFlags = PhysDeviceProps.limits.framebufferColorSampleCounts & PhysDeviceProps.limits.framebufferDepthSampleCounts;
-	if (SampleCountFlags & vk::SampleCountFlagBits::e8) { G_SampleCount = vk::SampleCountFlagBits::e8; }
-	else if (SampleCountFlags & vk::SampleCountFlagBits::e4) { G_SampleCount = vk::SampleCountFlagBits::e4; }
-	else if (SampleCountFlags & vk::SampleCountFlagBits::e2) { G_SampleCount = vk::SampleCountFlagBits::e2; }
-	else { G_SampleCount = vk::SampleCountFlagBits::e1; }
+//	if (SampleCountFlags & vk::SampleCountFlagBits::e8) { G_SampleCount = vk::SampleCountFlagBits::e8; }
+//	else if (SampleCountFlags & vk::SampleCountFlagBits::e4) { G_SampleCount = vk::SampleCountFlagBits::e4; }
+//	else if (SampleCountFlags & vk::SampleCountFlagBits::e2) { G_SampleCount = vk::SampleCountFlagBits::e2; }
+//	else { G_SampleCount = vk::SampleCountFlagBits::e1; }
 
 }
 
@@ -877,6 +1063,7 @@ void InitDevice()
 	vk::PhysicalDeviceFeatures EnabledFeatures = vk::PhysicalDeviceFeatures{};
 	EnabledFeatures.setFillModeNonSolid(vk::True);
 	EnabledFeatures.setShaderStorageImageMultisample(vk::True);
+	//EnabledFeatures.setSampleRateShading(vk::True);
 
 	const vk::DeviceCreateInfo DeviceCI = vk::DeviceCreateInfo(
 		{},
@@ -901,30 +1088,55 @@ void InitQueues()
 
 void InitCommandPools()
 {
-	const vk::CommandPoolCreateInfo DynamicCommandPoolCI = vk::CommandPoolCreateInfo{
-		vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-		G_GraphicsQueueFamilyIndex.value()
-	};
-	G_DynamicCommandPool = G_Device.createCommandPool(DynamicCommandPoolCI, nullptr, G_DLD);
+	{
+		const vk::CommandPoolCreateInfo DynamicCommandPoolCI = vk::CommandPoolCreateInfo(
+			vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+			G_GraphicsQueueFamilyIndex.value()
+		);
+		G_GraphicsCommandPoolDynamic = G_Device.createCommandPool(DynamicCommandPoolCI, nullptr, G_DLD);
 
-	const vk::CommandPoolCreateInfo StaticCommandPoolCI = vk::CommandPoolCreateInfo{
-		{},
-		G_GraphicsQueueFamilyIndex.value()
-	};
-	G_StaticCommandPool = G_Device.createCommandPool(StaticCommandPoolCI, nullptr, G_DLD);
+		const vk::CommandPoolCreateInfo StaticCommandPoolCI = vk::CommandPoolCreateInfo(
+			{},
+			G_GraphicsQueueFamilyIndex.value()
+		);
+		G_GraphicsCommandPoolStatic = G_Device.createCommandPool(StaticCommandPoolCI, nullptr, G_DLD);
+	}
+	{
+	 const vk::CommandPoolCreateInfo DynamicCommandPoolCI = vk::CommandPoolCreateInfo(
+			vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+			G_ComputeQueueFamilyIndex.value()
+		);
+		G_ComputeCommandPoolDynamic = G_Device.createCommandPool(DynamicCommandPoolCI, nullptr, G_DLD);
+
+		const vk::CommandPoolCreateInfo StaticCommandPoolCI = vk::CommandPoolCreateInfo{
+																						{},
+			G_ComputeQueueFamilyIndex.value()
+		};
+		G_ComputeCommandPoolStatic = G_Device.createCommandPool(StaticCommandPoolCI, nullptr, G_DLD);
+	}
 }
 
 void InitCommandBuffers()
 {
-	const vk::CommandBufferAllocateInfo CommandBufferAI = vk::CommandBufferAllocateInfo(
-		G_DynamicCommandPool,
+	const vk::CommandBufferAllocateInfo GraphicsCommandBufferAI = vk::CommandBufferAllocateInfo(
+		G_GraphicsCommandPoolDynamic,
+		vk::CommandBufferLevel::ePrimary,
+		G_MaxFramesInFlight * 2
+		);
+
+	const vk::CommandBufferAllocateInfo ComputeCommandBufferAI = vk::CommandBufferAllocateInfo(
+		G_ComputeCommandPoolDynamic,
 		vk::CommandBufferLevel::ePrimary,
 		G_MaxFramesInFlight
 		);
 
-	const std::vector<vk::CommandBuffer> CmdBuffers = G_Device.allocateCommandBuffers(CommandBufferAI, G_DLD);
+	const std::vector<vk::CommandBuffer> GraphicsCmdBuffers = G_Device.allocateCommandBuffers(GraphicsCommandBufferAI, G_DLD);
+	const std::vector<vk::CommandBuffer> ComputeCmdBuffers = G_Device.allocateCommandBuffers(ComputeCommandBufferAI, G_DLD);
+
 	for (std::uint32_t i = 0; i < G_MaxFramesInFlight; i++) {
-		G_CommandBuffers[i] = CmdBuffers[i];
+		std::get<G_CommandBufferTuple_Graphics1>(G_CommandBuffers[i]) = GraphicsCmdBuffers[i];
+		std::get<G_CommandBufferTuple_Graphics2>(G_CommandBuffers[i]) = GraphicsCmdBuffers[i + G_MaxFramesInFlight];
+		std::get<G_CommandBufferTuple_Compute>(G_CommandBuffers[i]) = ComputeCmdBuffers[i];
 	}
 }
 
@@ -935,6 +1147,8 @@ void InitSyncObjects()
 
 	for (std::size_t i = 0; i < G_MaxFramesInFlight; i++) {
 		G_ImageAvailableSemaphores[i] = G_Device.createSemaphore(SemaphoreCI, nullptr, G_DLD);
+		G_OffscreenFinishedSemaphores[i] = G_Device.createSemaphore(SemaphoreCI, nullptr, G_DLD);
+		G_ComputeFinishedSemaphores[i] = G_Device.createSemaphore(SemaphoreCI, nullptr, G_DLD);
 		G_RenderFinishedSemaphores[i] = G_Device.createSemaphore(SemaphoreCI, nullptr, G_DLD);
 		G_InFlightFences[i] = G_Device.createFence(FenceCI, nullptr, G_DLD);
 		G_WaitForFences[i] = true;
@@ -1015,207 +1229,96 @@ void InitSurface()
 
 void InitRenderPass()
 {
-	{
-		const std::array<vk::AttachmentDescription, 3> Attachments = std::array<vk::AttachmentDescription, 3>(
-			{
-				vk::AttachmentDescription(
-					{},
-					G_SurfaceFormat.format,
-					G_SampleCount,
-					vk::AttachmentLoadOp::eClear,
-					vk::AttachmentStoreOp::eStore,
-					vk::AttachmentLoadOp::eDontCare,
-					vk::AttachmentStoreOp::eDontCare,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eColorAttachmentOptimal
-					),
-				vk::AttachmentDescription(
-					{},
-					vk::Format::eR8Uint,
-					G_SampleCount,
-					vk::AttachmentLoadOp::eClear,
-					vk::AttachmentStoreOp::eStore,
-					vk::AttachmentLoadOp::eDontCare,
-					vk::AttachmentStoreOp::eDontCare,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eColorAttachmentOptimal
-					),
-				vk::AttachmentDescription(
-					{},
-					G_DepthFormat,
-					G_SampleCount,
-					vk::AttachmentLoadOp::eClear,
-					vk::AttachmentStoreOp::eDontCare,
-					vk::AttachmentLoadOp::eDontCare,
-					vk::AttachmentStoreOp::eDontCare,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eDepthStencilAttachmentOptimal
-					),
-			 }
-			);
-
-		static constexpr std::array<vk::AttachmentReference, 2> ColorAttachmentRefs = {
-			vk::AttachmentReference(0, vk::ImageLayout::eColorAttachmentOptimal),
-			vk::AttachmentReference(1, vk::ImageLayout::eColorAttachmentOptimal),
-		};
-		static constexpr std::array<vk::AttachmentReference, 1> DepthAttachmentRefs = {
-			vk::AttachmentReference(2, vk::ImageLayout::eDepthStencilAttachmentOptimal),
-		};
-
-		static constexpr vk::SubpassDescription subpass = vk::SubpassDescription(
-			{},
-			vk::PipelineBindPoint::eGraphics,
-			0,
-			nullptr,
-			1,
-			&ColorAttachmentRefs[0],
-			nullptr,
-			&DepthAttachmentRefs[0],
-			0,
-			nullptr
-			);
-
-		const vk::RenderPassCreateInfo RenderPassCI = vk::RenderPassCreateInfo(
-			{},
-			static_cast<std::uint32_t>(Attachments.size()),
-			Attachments.data(),
-			1,
-			&subpass
-			);
-
-		G_OffscreenRenderPass = G_Device.createRenderPass(RenderPassCI, nullptr, G_DLD);
-		if (!G_OffscreenRenderPass)
-			throw std::runtime_error("Failed to create offscreen renderpass");
-
-	}
-
-	if (G_SampleCount == vk::SampleCountFlagBits::e1) {
-
-		const std::array<vk::AttachmentDescription, 1> Attachments = std::array<vk::AttachmentDescription, 1>(
-			{
-				vk::AttachmentDescription(
-					{},
-					G_SurfaceFormat.format,
-					vk::SampleCountFlagBits::e1,
-					vk::AttachmentLoadOp::eClear,
-					vk::AttachmentStoreOp::eStore,
-					vk::AttachmentLoadOp::eDontCare,
-					vk::AttachmentStoreOp::eDontCare,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::ePresentSrcKHR
-					)
-			 }
-			);
-
-		static constexpr std::array<vk::AttachmentReference, 1> ColorAttachmentRefs = {
-			vk::AttachmentReference(0, vk::ImageLayout::eColorAttachmentOptimal),
-		};
-
-		static constexpr vk::SubpassDescription Subpass = vk::SubpassDescription(
-			{},
-			vk::PipelineBindPoint::eGraphics,
-			0,
-			nullptr,
-			1,
-			&ColorAttachmentRefs[0],
-			nullptr,
-			nullptr,
-			0,
-			nullptr
-			);
-
-		const vk::RenderPassCreateInfo RenderPassCI = vk::RenderPassCreateInfo(
-			{},
-			static_cast<std::uint32_t>(Attachments.size()),
-			Attachments.data(),
-			1,
-			&Subpass
-			);
-
-		G_RenderPass = G_Device.createRenderPass(RenderPassCI, nullptr, G_DLD);
-		if (!G_RenderPass)
-			throw std::runtime_error("Failed to create renderpass");
-
-
-	} else {
-
-		const std::array<vk::AttachmentDescription, 2> Attachments = std::array<vk::AttachmentDescription, 2>(
-			{
+	const std::array<vk::AttachmentDescription, 3> Attachments = std::array<vk::AttachmentDescription, 3>(
+		{
 			vk::AttachmentDescription(
 				{},
 				G_SurfaceFormat.format,
+				G_SampleCount,
+				vk::AttachmentLoadOp::eClear,
+				vk::AttachmentStoreOp::eStore,
+				vk::AttachmentLoadOp::eDontCare,
+				vk::AttachmentStoreOp::eDontCare,
+				vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eGeneral
+				),
+			vk::AttachmentDescription(
+				{},
+				vk::Format::eR8Uint,
+				G_SampleCount,
+				vk::AttachmentLoadOp::eClear,
+				vk::AttachmentStoreOp::eStore,
+				vk::AttachmentLoadOp::eDontCare,
+				vk::AttachmentStoreOp::eDontCare,
+				vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eGeneral
+				),
+			vk::AttachmentDescription(
+				{},
+				G_DepthFormat,
 				G_SampleCount,
 				vk::AttachmentLoadOp::eClear,
 				vk::AttachmentStoreOp::eDontCare,
 				vk::AttachmentLoadOp::eDontCare,
 				vk::AttachmentStoreOp::eDontCare,
 				vk::ImageLayout::eUndefined,
-				vk::ImageLayout::eColorAttachmentOptimal
+				vk::ImageLayout::eDepthStencilAttachmentOptimal
 				),
-			vk::AttachmentDescription(
-				{},
-				G_SurfaceFormat.format,
-				vk::SampleCountFlagBits::e1,
-				vk::AttachmentLoadOp::eDontCare,
-				vk::AttachmentStoreOp::eStore,
-				vk::AttachmentLoadOp::eDontCare,
-				vk::AttachmentStoreOp::eDontCare,
-				vk::ImageLayout::eUndefined,
-				vk::ImageLayout::ePresentSrcKHR
-				)
-			 }
-			);
+		 }
+		);
 
-		static constexpr std::array<vk::AttachmentReference, 1> ColorAttachmentRefs = {
-			vk::AttachmentReference(0, vk::ImageLayout::eColorAttachmentOptimal),
-		};
-		static constexpr std::array<vk::AttachmentReference, 1> ResolveAttachmentRefs = {
-			vk::AttachmentReference(1, vk::ImageLayout::eColorAttachmentOptimal),
-		};
+	static constexpr std::array<vk::AttachmentReference, 2> ColorAttachmentRefs = {
+		vk::AttachmentReference(0, vk::ImageLayout::eColorAttachmentOptimal),
+		vk::AttachmentReference(1, vk::ImageLayout::eColorAttachmentOptimal),
+	};
+	static constexpr std::array<vk::AttachmentReference, 1> DepthAttachmentRefs = {
+		vk::AttachmentReference(2, vk::ImageLayout::eDepthStencilAttachmentOptimal),
+	};
 
-		static constexpr vk::SubpassDescription Subpass = vk::SubpassDescription(
-			{},
-			vk::PipelineBindPoint::eGraphics,
-			0,
-			nullptr,
-			1,
-			&ColorAttachmentRefs[0],
-			&ResolveAttachmentRefs[0],
-			nullptr,
-			0,
-			nullptr
-			);
+	static constexpr vk::SubpassDescription Subpass = vk::SubpassDescription(
+		{},
+		vk::PipelineBindPoint::eGraphics,
+		0,
+		nullptr,
+		2,
+		&ColorAttachmentRefs[0],
+		nullptr,
+		&DepthAttachmentRefs[0],
+		0,
+		nullptr
+		);
 
-		const vk::RenderPassCreateInfo RenderPassCI = vk::RenderPassCreateInfo(
-			{},
-			static_cast<std::uint32_t>(Attachments.size()),
-			Attachments.data(),
-			1,
-			&Subpass
-			);
+	const vk::RenderPassCreateInfo RenderPassCI = vk::RenderPassCreateInfo(
+		{},
+		static_cast<std::uint32_t>(Attachments.size()),
+		Attachments.data(),
+		1,
+		&Subpass
+		);
 
-		G_RenderPass = G_Device.createRenderPass(RenderPassCI, nullptr, G_DLD);
-		if (!G_RenderPass)
-			throw std::runtime_error("Failed to create multisampled renderpass");
-	}
+	G_RenderPass = G_Device.createRenderPass(RenderPassCI, nullptr, G_DLD);
+	if (!G_RenderPass)
+		throw std::runtime_error("Failed to create renderpass");
 }
 
 
 
 void InitSwapchain()
 {
-	const vk::DescriptorPoolSize PoolSizes[2] = {
+	const vk::DescriptorPoolSize PoolSizes[3] = {
+		vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount),
 		vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount),
 		vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, G_MaxImageCount),
 	};
 	const vk::DescriptorPoolCreateInfo DescriptorPoolCI = vk::DescriptorPoolCreateInfo({}, G_MaxImageCount, PoolSizes);
 	G_OffscreenDescriptorPool = G_Device.createDescriptorPool(DescriptorPoolCI, nullptr, G_DLD);
 
-	static constexpr vk::DescriptorSetLayoutBinding LayoutBinding[2] = {
-		vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eFragment),
-		vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eFragment),
+	static constexpr vk::DescriptorSetLayoutBinding LayoutBinding[3] = {
+		vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute),
+		vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute),
+		vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute),
 	};
-	static constexpr vk::DescriptorSetLayoutCreateInfo DescriptorSetLayoutCI = vk::DescriptorSetLayoutCreateInfo({}, 2, LayoutBinding);
+	static constexpr vk::DescriptorSetLayoutCreateInfo DescriptorSetLayoutCI = vk::DescriptorSetLayoutCreateInfo({}, 3, LayoutBinding);
 	G_OffscreenDescriptorSetLayout = G_Device.createDescriptorSetLayout(DescriptorSetLayoutCI, nullptr, G_DLD);
 
 	G_OffscreenDescriptorSets.resize(G_MaxImageCount);
@@ -1262,7 +1365,7 @@ void CreateSwapchain()
 				G_SurfaceFormat.colorSpace,
 				G_SwapchainExtent,
 				1,
-				vk::ImageUsageFlagBits::eColorAttachment,
+				vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
 				vk::SharingMode::eConcurrent,
 				2,
 				QueueFamilyIndices,
@@ -1282,7 +1385,7 @@ void CreateSwapchain()
 				G_SurfaceFormat.colorSpace,
 				G_SwapchainExtent,
 				1,
-				vk::ImageUsageFlagBits::eColorAttachment,
+				vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
 				vk::SharingMode::eExclusive,
 				{},
 				{},
@@ -1328,11 +1431,16 @@ void CreateSwapchain()
 		}
 	}
 
+	std::vector<std::uint32_t> QueueFamilyIndices = {G_GraphicsQueueFamilyIndex.value(), G_ComputeQueueFamilyIndex.value()};
+	if (G_GraphicsQueueFamilyIndex.value() == G_ComputeQueueFamilyIndex.value()) QueueFamilyIndices.clear();
+
+
 	G_OffscreenColorRenderTargets.resize(NumImages);
 	std::fill(G_OffscreenColorRenderTargets.begin(), G_OffscreenColorRenderTargets.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
 	for (std::size_t i = 0; i < NumImages; i++) {
 		G_OffscreenColorRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage, vk::ImageTiling::eOptimal, G_SurfaceFormat.format, G_SampleCount,
-										G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true);
+													   G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true,
+													   QueueFamilyIndices);
 		if (!std::get<G_ImageTuple_Image>(G_OffscreenColorRenderTargets[i])) {
 			DestroySwapchain();
 			return;
@@ -1355,38 +1463,39 @@ void CreateSwapchain()
 	std::fill(G_OffscreenCustomStencilRenderTargets.begin(), G_OffscreenCustomStencilRenderTargets.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
 	for (std::size_t i = 0; i < NumImages; i++) {
 		G_OffscreenCustomStencilRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage, vk::ImageTiling::eOptimal, vk::Format::eR8Uint, G_SampleCount,
-									  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true);
+									  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true,
+															   QueueFamilyIndices);
 		if (!std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i])) {
 			DestroySwapchain();
 			return;
 		}
 	}
 
-	if (G_SampleCount != vk::SampleCountFlagBits::e1) {
-		G_ColorRenderTargetsMS.resize(NumImages);
-		std::fill(G_ColorRenderTargetsMS.begin(), G_ColorRenderTargetsMS.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
-		for (std::size_t i = 0; i < NumImages; i++) {
-			G_ColorRenderTargetsMS[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment, vk::ImageTiling::eOptimal, G_SurfaceFormat.format, G_SampleCount,
-														  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true);
-			if (!std::get<G_ImageTuple_Image>(G_ColorRenderTargetsMS[i])) {
-				DestroySwapchain();
-				return;
-			}
+	G_ColorRenderTargets.resize(NumImages);
+	std::fill(G_ColorRenderTargets.begin(), G_ColorRenderTargets.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
+	for (std::size_t i = 0; i < NumImages; i++) {
+		G_ColorRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eStorage |  vk::ImageUsageFlagBits::eTransferSrc, vk::ImageTiling::eOptimal, G_SurfaceFormat.format, G_SampleCount,
+												G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true,
+												QueueFamilyIndices);
+		if (!std::get<G_ImageTuple_Image>(G_ColorRenderTargets[i])) {
+			DestroySwapchain();
+			return;
 		}
 	}
 
 	for (std::size_t i = 0; i < NumImages; i++) {
-		const vk::DescriptorImageInfo DescriptorII[2] = {
+		const vk::DescriptorImageInfo DescriptorII[3] = {
 			vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_OffscreenColorRenderTargets[i]), vk::ImageLayout::eGeneral),
 			vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_OffscreenCustomStencilRenderTargets[i]), vk::ImageLayout::eGeneral),
+			vk::DescriptorImageInfo(nullptr, std::get<G_ImageTuple_ImageView>(G_ColorRenderTargets[i]), vk::ImageLayout::eGeneral),
 		};
-		const vk::WriteDescriptorSet WriteDS = vk::WriteDescriptorSet(G_OffscreenDescriptorSets[i], 0, 0, 2, vk::DescriptorType::eStorageImage, DescriptorII);
+		const vk::WriteDescriptorSet WriteDS = vk::WriteDescriptorSet(G_OffscreenDescriptorSets[i], 0, 0, 3, vk::DescriptorType::eStorageImage, DescriptorII);
 		G_Device.updateDescriptorSets(WriteDS, nullptr, G_DLD);
 	}
 
 
-	G_OffscreenFramebuffers.resize(NumImages);
-	std::fill(G_OffscreenFramebuffers.begin(), G_OffscreenFramebuffers.end(), nullptr);
+	G_Framebuffers.resize(NumImages);
+	std::fill(G_Framebuffers.begin(), G_Framebuffers.end(), nullptr);
 	for (std::size_t i = 0; i < NumImages; ++i) {
 		const std::vector<vk::ImageView> Attachments = std::vector<vk::ImageView>(
 			{
@@ -1397,7 +1506,7 @@ void CreateSwapchain()
 
 		const vk::FramebufferCreateInfo FramebufferCI = vk::FramebufferCreateInfo(
 			{},
-			G_OffscreenRenderPass,
+			G_RenderPass,
 			static_cast<std::uint32_t>(Attachments.size()),
 			Attachments.data(),
 			G_SwapchainExtent.width,
@@ -1405,69 +1514,13 @@ void CreateSwapchain()
 			1
 			);
 
-		G_OffscreenFramebuffers[i] = G_Device.createFramebuffer(FramebufferCI, nullptr, G_DLD);
-		if (!G_OffscreenFramebuffers[i]) {
+		G_Framebuffers[i] = G_Device.createFramebuffer(FramebufferCI, nullptr, G_DLD);
+		if (!G_Framebuffers[i]) {
 			DestroySwapchain();
 			return;
 		}
 	}
 
-	if (G_SampleCount == vk::SampleCountFlagBits::e1) {
-
-		G_Framebuffers.resize(NumImages);
-		std::fill(G_Framebuffers.begin(), G_Framebuffers.end(), nullptr);
-		for (std::size_t i = 0; i < NumImages; ++i) {
-			const std::vector<vk::ImageView> Attachments = std::vector<vk::ImageView>(
-				{
-					G_SwapchainImageViews[i],
-				});
-
-			const vk::FramebufferCreateInfo FramebufferCI = vk::FramebufferCreateInfo(
-				{},
-				G_RenderPass,
-				static_cast<std::uint32_t>(Attachments.size()),
-				Attachments.data(),
-				G_SwapchainExtent.width,
-				G_SwapchainExtent.height,
-				1
-				);
-
-			G_Framebuffers[i] = G_Device.createFramebuffer(FramebufferCI, nullptr, G_DLD);
-			if (!G_Framebuffers[i]) {
-				DestroySwapchain();
-				return;
-			}
-		}
-
-	} else {
-
-		G_Framebuffers.resize(NumImages);
-		std::fill(G_Framebuffers.begin(), G_Framebuffers.end(), nullptr);
-
-		for (std::size_t i = 0; i < NumImages; ++i) {
-			const std::vector<vk::ImageView> Attachments = std::vector<vk::ImageView>(
-				{
-					std::get<G_ImageTuple_ImageView>(G_ColorRenderTargetsMS[i]),
-					G_SwapchainImageViews[i],
-				});
-
-			const vk::FramebufferCreateInfo FramebufferCI = vk::FramebufferCreateInfo(
-				{},
-				G_RenderPass,
-				static_cast<std::uint32_t>(Attachments.size()),
-				Attachments.data(),
-				G_SwapchainExtent.width,
-				G_SwapchainExtent.height,
-				1
-				);
-
-			G_Framebuffers[i] = G_Device.createFramebuffer(FramebufferCI, nullptr, G_DLD);
-			if (!G_Framebuffers[i]) {
-				DestroySwapchain();
-				return;
-			}
-		}
-	}
 }
 
 void DestroySwapchain()
@@ -1485,15 +1538,7 @@ void DestroySwapchain()
 		}
 		G_Framebuffers.clear();
 
-		for(auto& Item : G_OffscreenFramebuffers) {
-			if (Item) {
-				G_Device.destroyFramebuffer(Item, nullptr, G_DLD);
-				Item = nullptr;
-			}
-		}
-		G_OffscreenFramebuffers.clear();
-
-		for(auto& [Image, ImageMemory, ImageView] : G_ColorRenderTargetsMS) {
+		for(auto& [Image, ImageMemory, ImageView] : G_ColorRenderTargets) {
 			if (ImageView) {
 				G_Device.destroyImageView(ImageView, nullptr, G_DLD);
 				ImageView = nullptr;
@@ -1507,7 +1552,7 @@ void DestroySwapchain()
 				Image = nullptr;
 			}
 		}
-		G_ColorRenderTargetsMS.clear();
+		G_ColorRenderTargets.clear();
 
 		for(auto& [Image, ImageMemory, ImageView] : G_OffscreenCustomStencilRenderTargets) {
 			if (ImageView) {
@@ -1585,13 +1630,11 @@ void ShutdownSwapchain()
 {
 	DestroySwapchain();
 
-	if (G_Device) {
-		if (G_OffscreenDescriptorPool) {
-			G_Device.destroyDescriptorPool(G_OffscreenDescriptorPool, nullptr, G_DLD);
-		}
-		if (G_OffscreenDescriptorSetLayout) {
-			G_Device.destroyDescriptorSetLayout(G_OffscreenDescriptorSetLayout, nullptr, G_DLD);
-		}
+	if (G_OffscreenDescriptorPool) {
+		G_Device.destroyDescriptorPool(G_OffscreenDescriptorPool, nullptr, G_DLD);
+	}
+	if (G_OffscreenDescriptorSetLayout) {
+		G_Device.destroyDescriptorSetLayout(G_OffscreenDescriptorSetLayout, nullptr, G_DLD);
 	}
 }
 
@@ -1669,6 +1712,117 @@ void ShutdownImGui()
 	G_ImGuiContext = nullptr;
 }
 
+void InitGraphicsPipeline()
+{
 
+	static constexpr vk::PipelineLayoutCreateInfo PipelineLayoutCI = vk::PipelineLayoutCreateInfo{{}, 0, nullptr, 0, nullptr};
+	G_GraphicsPipelineLayout = G_Device.createPipelineLayout(PipelineLayoutCI, nullptr, G_DLD);
 
+	const vk::ShaderModule ShaderModuleVS = CreateShader("DefaultVS.spv");
+	const vk::ShaderModule ShaderModuleFS = CreateShader("DefaultFS.spv");
+
+	const std::array<vk::PipelineShaderStageCreateInfo, 2> ShaderStageCIs = {
+		vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, ShaderModuleVS, "main"),
+		vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, ShaderModuleFS, "main"),
+		};
+
+	static constexpr vk::PipelineVertexInputStateCreateInfo VertexInputStateCI = vk::PipelineVertexInputStateCreateInfo({}, 0, nullptr, 0, nullptr);
+
+	static constexpr vk::PipelineInputAssemblyStateCreateInfo InputAssemblyCI = vk::PipelineInputAssemblyStateCreateInfo({}, vk::PrimitiveTopology::eTriangleList);
+	static constexpr vk::PipelineTessellationStateCreateInfo TesselationStateCI = vk::PipelineTessellationStateCreateInfo();
+
+	const vk::Viewport Viewport(0.0f, 0.0f, float(G_SwapchainExtent.width), float(G_SwapchainExtent.height));
+	const vk::Rect2D Scissor(vk::Offset2D(), vk::Extent2D(G_SwapchainExtent.width, G_SwapchainExtent.height));
+	static const vk::PipelineViewportStateCreateInfo ViewportStateCI = vk::PipelineViewportStateCreateInfo({}, 1, &Viewport, 1, &Scissor);
+
+	static constexpr vk::PipelineRasterizationStateCreateInfo RasterizationStateCI = vk::PipelineRasterizationStateCreateInfo({}, {}, {}, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eClockwise, {}, {}, {}, {}, 1.0f);
+	const vk::PipelineMultisampleStateCreateInfo MultisampleCI = vk::PipelineMultisampleStateCreateInfo({}, G_SampleCount);
+
+	static constexpr vk::PipelineDepthStencilStateCreateInfo DepthStencilCI = vk::PipelineDepthStencilStateCreateInfo({}, vk::True, vk::True, vk::CompareOp::eLess, vk::False, vk::False, {}, {}, 0.0f, 1.0f);
+	static constexpr vk::PipelineColorBlendAttachmentState ColorBlendAttachmentState[2] =
+		{
+			vk::PipelineColorBlendAttachmentState({}, {}, {}, {}, {}, {}, {}, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA),
+			vk::PipelineColorBlendAttachmentState({}, {}, {}, {}, {}, {}, {}, vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+		};
+	static constexpr vk::PipelineColorBlendStateCreateInfo BlendStateCI = vk::PipelineColorBlendStateCreateInfo({}, {}, {}, 2, ColorBlendAttachmentState);
+
+	static constexpr std::array<vk::DynamicState, 2> DynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+	static constexpr vk::PipelineDynamicStateCreateInfo DynamicStateCI = vk::PipelineDynamicStateCreateInfo({}, static_cast<std::uint32_t>(DynamicStates.size()), DynamicStates.data());
+
+	const vk::GraphicsPipelineCreateInfo GraphicsPipelineCI = vk::GraphicsPipelineCreateInfo(
+		vk::PipelineCreateFlags(),
+		ShaderStageCIs,
+		&VertexInputStateCI,
+		&InputAssemblyCI,
+		&TesselationStateCI,
+		&ViewportStateCI,
+		&RasterizationStateCI,
+		&MultisampleCI,
+		&DepthStencilCI,
+		&BlendStateCI,
+		&DynamicStateCI,
+		G_GraphicsPipelineLayout,
+		G_RenderPass,
+		0
+		);
+
+	G_GraphicsPipeline = G_Device.createGraphicsPipeline({}, GraphicsPipelineCI, nullptr, G_DLD).value;
+
+	G_Device.destroyShaderModule(ShaderModuleVS, nullptr, G_DLD);
+	G_Device.destroyShaderModule(ShaderModuleFS, nullptr, G_DLD);
+}
+
+void ShutdownGraphicsPipeline()
+{
+	if (G_GraphicsPipeline) {
+		G_Device.destroyPipeline(G_GraphicsPipeline, nullptr, G_DLD);
+		G_GraphicsPipeline = nullptr;
+	}
+	if (G_GraphicsPipelineLayout) {
+		G_Device.destroyPipelineLayout(G_GraphicsPipelineLayout, nullptr, G_DLD);
+		G_GraphicsPipelineLayout = nullptr;
+	}
+}
+
+void InitComputePipeline()
+{
+	static constexpr vk::PipelineLayoutCreateInfo PipelineLayoutCI = vk::PipelineLayoutCreateInfo{{}, 1, &G_OffscreenDescriptorSetLayout, 0, nullptr};
+	G_ComputePipelineLayout = G_Device.createPipelineLayout(PipelineLayoutCI, nullptr, G_DLD);
+
+	const vk::ShaderModule ShaderModuleCS = CreateShader("OutlineCS.spv");
+	const vk::PipelineShaderStageCreateInfo ShaderStageCI = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eCompute, ShaderModuleCS, "main");
+
+	const vk::ComputePipelineCreateInfo ComputePipelineCI = vk::ComputePipelineCreateInfo(
+		{},
+		ShaderStageCI,
+		G_ComputePipelineLayout,
+		{},
+		{}
+		);
+
+	G_ComputePipeline = G_Device.createComputePipeline({}, ComputePipelineCI, nullptr, G_DLD).value;
+	G_Device.destroyShaderModule(ShaderModuleCS, nullptr, G_DLD);
+}
+
+void ShutdownComputePipeline()
+{
+	if (G_ComputePipeline) {
+		G_Device.destroyPipeline(G_ComputePipeline, nullptr, G_DLD);
+		G_ComputePipeline = nullptr;
+	}
+	if (G_ComputePipelineLayout) {
+		G_Device.destroyPipelineLayout(G_ComputePipelineLayout, nullptr, G_DLD);
+		G_ComputePipelineLayout = nullptr;
+	}
+}
+
+void InitModel()
+{
+
+}
+
+void ShutdownModel()
+{
+
+}
 

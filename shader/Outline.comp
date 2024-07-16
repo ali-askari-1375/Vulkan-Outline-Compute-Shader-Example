@@ -1,0 +1,43 @@
+#version 460
+
+layout (local_size_x = 16, local_size_y = 16) in;
+layout (binding = 0, rgba8) uniform readonly image2D InputColorImage;
+layout (binding = 1, r8ui) uniform readonly uimage2D StencilImage;
+layout (binding = 2, rgba8) uniform image2D OutputColorImage;
+
+bool Check()
+{
+	for (int m = -3; m <= 3; m++) {
+		for (int k = -3; k <= 3; k++) {
+			uint Stencil = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x + m, gl_GlobalInvocationID.y + k)).r;
+			if (Stencil != 0) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void main()
+{
+	ivec2 ImgSize = imageSize(InputColorImage);
+
+	if (gl_GlobalInvocationID.x >= ImgSize.x) return;
+	if (gl_GlobalInvocationID.y >= ImgSize.y) return;
+
+	bool bOutline = false;
+
+	uint Stencil = imageLoad(StencilImage, ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y)).r;
+	if (Stencil == 0) {
+		bOutline = Check();
+	}
+
+	if (!bOutline) {
+		vec3 rgb = imageLoad(InputColorImage, ivec2(gl_GlobalInvocationID.xy)).rgb;
+		imageStore(OutputColorImage, ivec2(gl_GlobalInvocationID.xy), vec4(rgb, 1.0f));
+	} else {
+		imageStore(OutputColorImage, ivec2(gl_GlobalInvocationID.xy), vec4(1.0f, 1.0f, 1.0f, 1.0f));
+	}
+}
+
