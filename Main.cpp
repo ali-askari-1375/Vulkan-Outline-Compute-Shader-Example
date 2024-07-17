@@ -383,7 +383,7 @@ bool Render(bool bClearOnly)
 
 
 		vk::ClearColorValue ClearColor;
-		std::memcpy(&ClearColor, DirectX::Colors::White.f, sizeof(ClearColor));
+		std::memcpy(&ClearColor, DirectX::Colors::Khaki.f, sizeof(ClearColor));
 		static constexpr vk::ClearColorValue ClearCustomColor(std::array<std::uint32_t, 4>{0,0,0,0});
 		static constexpr vk::ClearDepthStencilValue ClearDepth(1.0f, 0);
 		const vk::ClearValue ClearValues[3] = {ClearColor, ClearCustomColor, ClearDepth};
