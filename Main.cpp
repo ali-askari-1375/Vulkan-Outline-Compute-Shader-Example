@@ -91,6 +91,7 @@ void CreateSwapchain();
 void DestroySwapchain();
 void RecreateSwapchain();
 void ShutdownSwapchain();
+void PerformInitialOwnershipTransfers();
 
 void InitImGui();
 void ShutdownImGui();
@@ -1680,132 +1681,8 @@ void CreateSwapchain()
 		}
 	}
 
+	PerformInitialOwnershipTransfers();
 
-	if (G_GraphicsQueueFamilyIndex.value() != G_ComputeQueueFamilyIndex.value())
-	{
-		{
-			auto CommandBuffer = BeginSingleUseComputeCommandBuffer();
-
-			for (std::uint32_t i = 0; i < NumImages; i++) {
-				const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
-					vk::ImageMemoryBarrier(
-						vk::AccessFlagBits::eNone,
-						vk::AccessFlagBits::eNone,
-						vk::ImageLayout::eUndefined,
-						vk::ImageLayout::eColorAttachmentOptimal,
-						G_ComputeQueueFamilyIndex.value(),
-						G_GraphicsQueueFamilyIndex.value(),
-						std::get<G_ImageTuple_Image>(G_OffscreenColorRenderTargets[i]),
-						vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-
-					vk::ImageMemoryBarrier(
-						vk::AccessFlagBits::eNone,
-						vk::AccessFlagBits::eNone,
-						vk::ImageLayout::eUndefined,
-						vk::ImageLayout::eColorAttachmentOptimal,
-						G_ComputeQueueFamilyIndex.value(),
-						G_GraphicsQueueFamilyIndex.value(),
-						std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i]),
-						vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-
-				};
-				CommandBuffer.pipelineBarrier(
-					vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
-					{}, {}, {},
-					ImageMemoryBarriers,
-					G_DLD
-					);
-
-			}
-
-			EndSingleUseComputeCommandBuffer(CommandBuffer);
-		}
-		{
-			auto CommandBuffer = BeginSingleUseGraphicsCommandBuffer();
-
-			for (std::uint32_t i = 0; i < NumImages; i++) {
-				const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
-
-					vk::ImageMemoryBarrier(
-						vk::AccessFlagBits::eNone,
-						vk::AccessFlagBits::eNone,
-						vk::ImageLayout::eUndefined,
-						vk::ImageLayout::eGeneral,
-						G_GraphicsQueueFamilyIndex.value(),
-						G_ComputeQueueFamilyIndex.value(),
-						std::get<G_ImageTuple_Image>(G_ColorRenderTargets[i]),
-						vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-				};
-				CommandBuffer.pipelineBarrier(
-					vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
-					{}, {}, {},
-					ImageMemoryBarriers,
-					G_DLD
-					);
-
-			}
-
-			EndSingleUseGraphicsCommandBuffer(CommandBuffer);
-		}
-	}
-	else {
-		auto CommandBuffer = BeginSingleUseGraphicsCommandBuffer();
-
-		for (std::uint32_t i = 0; i < NumImages; i++) {
-			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
-				vk::ImageMemoryBarrier(
-					vk::AccessFlagBits::eNone,
-					vk::AccessFlagBits::eNone,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eColorAttachmentOptimal,
-					vk::QueueFamilyIgnored,
-					vk::QueueFamilyIgnored,
-					std::get<G_ImageTuple_Image>(G_OffscreenColorRenderTargets[i]),
-					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-
-				vk::ImageMemoryBarrier(
-					vk::AccessFlagBits::eNone,
-					vk::AccessFlagBits::eNone,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eColorAttachmentOptimal,
-					vk::QueueFamilyIgnored,
-					vk::QueueFamilyIgnored,
-					std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i]),
-					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-
-			};
-			CommandBuffer.pipelineBarrier(
-				vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
-				{}, {}, {},
-				ImageMemoryBarriers,
-				G_DLD
-				);
-		}
-
-		for (std::uint32_t i = 0; i < NumImages; i++) {
-			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
-
-				vk::ImageMemoryBarrier(
-					vk::AccessFlagBits::eNone,
-					vk::AccessFlagBits::eNone,
-					vk::ImageLayout::eUndefined,
-					vk::ImageLayout::eGeneral,
-					vk::QueueFamilyIgnored,
-					vk::QueueFamilyIgnored,
-					std::get<G_ImageTuple_Image>(G_ColorRenderTargets[i]),
-					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
-			};
-			CommandBuffer.pipelineBarrier(
-				vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
-				{}, {}, {},
-				ImageMemoryBarriers,
-				G_DLD
-				);
-
-		}
-
-		EndSingleUseGraphicsCommandBuffer(CommandBuffer);
-	}
 }
 
 void DestroySwapchain()
@@ -1920,6 +1797,131 @@ void ShutdownSwapchain()
 	}
 	if (G_OffscreenDescriptorSetLayout) {
 		G_Device.destroyDescriptorSetLayout(G_OffscreenDescriptorSetLayout, nullptr, G_DLD);
+	}
+}
+
+void PerformInitialOwnershipTransfers()
+{
+	const std::size_t NumImages = G_SwapchainImages.size();
+
+	if (G_GraphicsQueueFamilyIndex.value() != G_ComputeQueueFamilyIndex.value())
+	{
+		auto ComputeCommandBuffer = BeginSingleUseComputeCommandBuffer();
+		for (std::uint32_t i = 0; i < NumImages; i++) {
+			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal,
+					G_ComputeQueueFamilyIndex.value(),
+					G_GraphicsQueueFamilyIndex.value(),
+					std::get<G_ImageTuple_Image>(G_OffscreenColorRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal,
+					G_ComputeQueueFamilyIndex.value(),
+					G_GraphicsQueueFamilyIndex.value(),
+					std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+
+			};
+			ComputeCommandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eAllCommands,
+				vk::PipelineStageFlagBits::eAllCommands,
+				{}, {}, {},
+				ImageMemoryBarriers,
+				G_DLD
+				);
+		}
+		EndSingleUseComputeCommandBuffer(ComputeCommandBuffer);
+
+		auto GraphicsCommandBuffer = BeginSingleUseGraphicsCommandBuffer();
+		for (std::uint32_t i = 0; i < NumImages; i++) {
+			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eGeneral,
+					G_GraphicsQueueFamilyIndex.value(),
+					G_ComputeQueueFamilyIndex.value(),
+					std::get<G_ImageTuple_Image>(G_ColorRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+			};
+			GraphicsCommandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eAllCommands,
+				vk::PipelineStageFlagBits::eAllCommands,
+				{}, {}, {},
+				ImageMemoryBarriers,
+				G_DLD
+				);
+
+		}
+		EndSingleUseGraphicsCommandBuffer(GraphicsCommandBuffer);
+
+	}
+	else {
+		auto CommandBuffer = BeginSingleUseGraphicsCommandBuffer();
+
+		for (std::uint32_t i = 0; i < NumImages; i++) {
+			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal,
+					vk::QueueFamilyIgnored,
+					vk::QueueFamilyIgnored,
+					std::get<G_ImageTuple_Image>(G_OffscreenColorRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eColorAttachmentOptimal,
+					vk::QueueFamilyIgnored,
+					vk::QueueFamilyIgnored,
+					std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+
+			};
+			CommandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+				{}, {}, {},
+				ImageMemoryBarriers,
+				G_DLD
+				);
+		}
+
+		for (std::uint32_t i = 0; i < NumImages; i++) {
+			const vk::ImageMemoryBarrier ImageMemoryBarriers[] = {
+
+				vk::ImageMemoryBarrier(
+					vk::AccessFlagBits::eNone,
+					vk::AccessFlagBits::eNone,
+					vk::ImageLayout::eUndefined,
+					vk::ImageLayout::eGeneral,
+					vk::QueueFamilyIgnored,
+					vk::QueueFamilyIgnored,
+					std::get<G_ImageTuple_Image>(G_ColorRenderTargets[i]),
+					vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)),
+			};
+			CommandBuffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
+				{}, {}, {},
+				ImageMemoryBarriers,
+				G_DLD
+				);
+
+		}
+
+		EndSingleUseGraphicsCommandBuffer(CommandBuffer);
 	}
 }
 
