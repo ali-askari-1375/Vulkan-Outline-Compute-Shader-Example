@@ -1522,7 +1522,7 @@ void InitRenderPass()
 				),
 			vk::AttachmentDescription(
 				{},
-				vk::Format::eR8Uint,
+				vk::Format::eR8G8B8A8Uint,
 				G_SampleCount,
 				vk::AttachmentLoadOp::eClear,
 				vk::AttachmentStoreOp::eStore,
@@ -1788,7 +1788,7 @@ void CreateSwapchain()
 	G_OffscreenCustomStencilRenderTargets.resize(NumImages);
 	std::fill(G_OffscreenCustomStencilRenderTargets.begin(), G_OffscreenCustomStencilRenderTargets.end(), std::make_tuple<vk::Image, vk::DeviceMemory, vk::ImageView>({}, {}, {}));
 	for (std::size_t i = 0; i < NumImages; i++) {
-		G_OffscreenCustomStencilRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage, vk::ImageTiling::eOptimal, vk::Format::eR8Uint, G_SampleCount,
+		G_OffscreenCustomStencilRenderTargets[i] = CreateImage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage, vk::ImageTiling::eOptimal, vk::Format::eR8G8B8A8Uint, G_SampleCount,
 									  G_SwapchainExtent.width, G_SwapchainExtent.height, vk::ImageAspectFlagBits::eColor, true,
 															   QueueFamilyIndices);
 		if (!std::get<G_ImageTuple_Image>(G_OffscreenCustomStencilRenderTargets[i])) {
