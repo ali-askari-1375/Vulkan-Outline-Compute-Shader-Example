@@ -5,7 +5,7 @@ project(VkOutlineComputeShader LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Vulkan REQUIRED)
+#find_package(Vulkan REQUIRED)
 
 add_executable(VkOutlineComputeShader WIN32
 	Main.cpp
@@ -18,7 +18,8 @@ add_executable(VkOutlineComputeShader WIN32
 	external/imgui/backends/imgui_impl_vulkan.cpp
 )
 
-target_include_directories(VkOutlineComputeShader PUBLIC "${Vulkan_INCLUDE_DIR}")
+#target_include_directories(VkOutlineComputeShader PUBLIC "${Vulkan_INCLUDE_DIR}")
+target_include_directories(VkOutlineComputeShader PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/external/vksdk_1_3_268_0/Include")
 target_include_directories(VkOutlineComputeShader PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
 target_include_directories(VkOutlineComputeShader PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/external/tinygltf")
 target_link_libraries(VkOutlineComputeShader PUBLIC "Shcore.lib")
